@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package echo;
+
+option go_package = "grpc-proxy/proto/echo";
+
+service Echo{
+  rpc SayHello (HelloRequest) returns (HelloResponse);
+}
+message  HelloRequest {
+  string message = 1;
+}
+message  HelloResponse {
+  string message = 1;
+}
