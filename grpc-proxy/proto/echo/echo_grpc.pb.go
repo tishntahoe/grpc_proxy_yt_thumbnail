@@ -19,14 +19,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Echo_SayHello_FullMethodName = "/echo.Echo/SayHello"
+	Echo_PreDownload_FullMethodName = "/echo.Echo/preDownload"
 )
 
 // EchoClient is the client API for Echo service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type EchoClient interface {
-	SayHello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloResponse, error)
+	PreDownload(ctx context.Context, in *Download, opts ...grpc.CallOption) (*Response, error)
 }
 
 type echoClient struct {
@@ -37,10 +37,10 @@ func NewEchoClient(cc grpc.ClientConnInterface) EchoClient {
 	return &echoClient{cc}
 }
 
-func (c *echoClient) SayHello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloResponse, error) {
+func (c *echoClient) PreDownload(ctx context.Context, in *Download, opts ...grpc.CallOption) (*Response, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(HelloResponse)
-	err := c.cc.Invoke(ctx, Echo_SayHello_FullMethodName, in, out, cOpts...)
+	out := new(Response)
+	err := c.cc.Invoke(ctx, Echo_PreDownload_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +51,7 @@ func (c *echoClient) SayHello(ctx context.Context, in *HelloRequest, opts ...grp
 // All implementations must embed UnimplementedEchoServer
 // for forward compatibility.
 type EchoServer interface {
-	SayHello(context.Context, *HelloRequest) (*HelloResponse, error)
+	PreDownload(context.Context, *Download) (*Response, error)
 	mustEmbedUnimplementedEchoServer()
 }
 
@@ -62,8 +62,8 @@ type EchoServer interface {
 // pointer dereference when methods are called.
 type UnimplementedEchoServer struct{}
 
-func (UnimplementedEchoServer) SayHello(context.Context, *HelloRequest) (*HelloResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SayHello not implemented")
+func (UnimplementedEchoServer) PreDownload(context.Context, *Download) (*Response, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PreDownload not implemented")
 }
 func (UnimplementedEchoServer) mustEmbedUnimplementedEchoServer() {}
 func (UnimplementedEchoServer) testEmbeddedByValue()              {}
@@ -86,20 +86,20 @@ func RegisterEchoServer(s grpc.ServiceRegistrar, srv EchoServer) {
 	s.RegisterService(&Echo_ServiceDesc, srv)
 }
 
-func _Echo_SayHello_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(HelloRequest)
+func _Echo_PreDownload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Download)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EchoServer).SayHello(ctx, in)
+		return srv.(EchoServer).PreDownload(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Echo_SayHello_FullMethodName,
+		FullMethod: Echo_PreDownload_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EchoServer).SayHello(ctx, req.(*HelloRequest))
+		return srv.(EchoServer).PreDownload(ctx, req.(*Download))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -112,8 +112,8 @@ var Echo_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*EchoServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "SayHello",
-			Handler:    _Echo_SayHello_Handler,
+			MethodName: "preDownload",
+			Handler:    _Echo_PreDownload_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
