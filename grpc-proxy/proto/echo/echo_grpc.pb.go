@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v5.29.1
-// source: proto/echo.proto
+// source: echo.proto
 
 package echo
 
@@ -117,5 +117,5 @@ var Echo_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/echo.proto",
+	Metadata: "echo.proto",
 }

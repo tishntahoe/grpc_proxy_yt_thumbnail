@@ -3,25 +3,41 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"golang.org/x/net/html"
+	"google.golang.org/grpc"
+	pb "grpc_proxy_yt_thumbnail/grpc-proxy/proto/echo"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 
-	"google.golang.org/grpc"
-	pb "grpc_proxy_yt_thumbnail/grpc-proxy/proto/echo"
+	db "grpc_proxy_yt_thumbnail/Services"
 )
+
+type arrayUrls []string
+
+var urls arrayUrls
+
+func (i *arrayUrls) String() string {
+	return fmt.Sprintf("%v", *i)
+}
+func (i *arrayUrls) Set(v string) error {
+	*i = append(*i, v)
+	return nil
+}
+
+type sync_or_async_interface interface {
+	Download() ([][]byte, string)
+}
 
 type server struct {
 	pb.UnimplementedEchoServer
 }
 
-type sync_or_async_interface interface {
-	Download() [][]byte
-}
 type mainstruct struct {
 	s   *server
 	ctx context.Context
@@ -51,6 +67,48 @@ func htmlThumbFinder(nd *html.Node) (response string, ok bool) {
 	}
 	return "", false
 }
+func downloadFileToDirectory(thumbUrl string) *os.File {
+
+	thumbnailPicUrl, _ := http.Get(thumbUrl)
+	mediaId := getMediaId(thumbUrl)
+	out, err := os.Create("downloadedFiles/" + mediaId + ".jpg")
+	if err != nil {
+		log.Fatal("Не удалось создать новый файл: ", err)
+	}
+
+	_, err = io.Copy(out, thumbnailPicUrl.Body)
+	if err != nil {
+		log.Fatal("Не удалось создать новый файл: ", err)
+	}
+	log.Println("Файл успешно скачан!")
+	return out
+}
+func parseVidToThumb(url string) string {
+	resp, err := http.Get(url)
+	defer resp.Body.Close()
+	if err != nil {
+		log.Fatalf("Ссылка недействительна: %v", err)
+	}
+	parsed_resp, err := html.Parse(resp.Body)
+	if err != nil {
+		log.Fatalf("Не получилось распарсить код-html: %v", err)
+	}
+	url, ok := htmlThumbFinder(parsed_resp)
+	if ok == false {
+		log.Fatalf("Не нашел Thumbnail у этого видео")
+	}
+	return url
+}
+func convertToBytes(f *os.File) (bytesSlice [][]byte) {
+	f.Seek(0, io.SeekStart)
+	convertedImageToBytes, err := io.ReadAll(f)
+	if err != nil {
+		log.Fatalf("Ошибка на чтении файла: %v", err)
+	}
+	f.Close()
+	bytesSlice = append(bytesSlice, convertedImageToBytes)
+	return
+}
 
 func (s *server) PreDownload(ctx context.Context, req *pb.Download) (*pb.Response, error) {
 
@@ -69,64 +127,36 @@ func (s *server) PreDownload(ctx context.Context, req *pb.Download) (*pb.Respons
 			req,
 		}}
 	}
-	output := downloadInterface.Download()
-
-	log.Printf("Вывод: %s", output)
+	output, thumbUrl := downloadInterface.Download() // сделать мапу
+	dbProxy := db.DbConnectInfo.CreateConnectDb()
+	for _, val := range output {
+		db.InsertDb(dbProxy, db.Thumbnail_insrt{, val})
+	}
 	return &pb.Response{Resp: output}, nil
 }
 
 // Асинхронный метод (usage goroutines)
-func (full async) Download() [][]byte {
-	return nil
+func (full async) Download() ([][]byte,string) {
+	return nil,""
 }
 
 // Синхронный метод
-func (full sync) Download() [][]byte {
+func (full sync) Download() ([][]byte,string) {
 	if len(full.req.Urls) != 1 {
-		return nil
-	}
+		return nil, ""
+	} // ИСПРАВИТЬ
 	mainUrl := full.req.Urls[0]
-	resp, err := http.Get(mainUrl)
-	defer resp.Body.Close()
-
-	if err != nil {
-		log.Fatalf("Ссылка недействительна: %v", err)
-		return nil
-	}
-	parsed_resp, err := html.Parse(resp.Body)
-	if err != nil {
-		log.Fatalf("Не получилось распарсить код-html: %v", err)
-	}
-
-	url, ok := htmlThumbFinder(parsed_resp)
-	if ok == false {
-		log.Fatalf("Не нашел Thumbnail у этого видео")
-	}
-
-	thumbnailPicUrl, _ := http.Get(url)
-	mediaId := getMediaId(url)
-
-	os.Mkdir("downloadedFiles", 0777)
-	out, err := os.Create("downloadedFiles/" + mediaId + ".jpg")
-	if err != nil {
-		log.Fatal("Не удалось создать новый файл: ", err)
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, thumbnailPicUrl.Body)
-	if err != nil {
-		log.Fatal("Не удалось создать новый файл: ", err)
-	}
-
-	log.Println("Файл успешно скачан!")
-
-	return nil
+	thumbUrl := parseVidToThumb(mainUrl)
+	out := downloadFileToDirectory(thumbUrl)
+	return convertToBytes(out), thumbUrl
 }
 
 func main() {
-	mode := flag.Bool("async", false, "Use Async")
-	url := flag.String("url", "", "Some Urls")
+	mode := flag.Bool("async", false, "Async mode")
+	flag.Var(&urls, "urls", "Some urls")
 	flag.Parse() // Разбираем флаги
+
+	strUrls := slices.Clone(urls)
 
 	listener, err := net.Listen("tcp", ":50051")
 	if err != nil {
@@ -134,10 +164,10 @@ func main() {
 	}
 	s := grpc.NewServer()
 	pb.RegisterEchoServer(s, &server{})
-	log.Println("Старт")
+	log.Println("Старт grpc сервера")
 
+	// открытие горутины для участия флагов и подключения утилиты
 	go func() {
-
 		conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure())
 		if err != nil {
 			log.Fatalf("Проблема с подключением ко второму серверу: %v", err)
@@ -145,11 +175,13 @@ func main() {
 		defer conn.Close()
 
 		client := pb.NewEchoClient(conn)
-		res, err := client.PreDownload(context.Background(), &pb.Download{Url: *url, Async *mode})
-		if err != nil {
-			log.Fatalf("Error calling Download: %v", err)
+		if len(strUrls) != 0 {
+			_, err = client.PreDownload(context.Background(), &pb.Download{Urls: strUrls, Async: *mode})
 		}
-		log.Printf("Ответ сервера: %s", res.Status)
+		if err != nil {
+			log.Fatalf("Ошибка вызова сервера обработки консольной утилиты: %v", err)
+		}
+		log.Printf("Сервер обработки консольной утилиты запущен")
 	}()
 
 	if err := s.Serve(listener); err != nil {
