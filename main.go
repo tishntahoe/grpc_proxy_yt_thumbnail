@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"golang.org/x/net/html"
 	"google.golang.org/grpc"
+	db "grpc_proxy_yt_thumbnail/Services"
 	pb "grpc_proxy_yt_thumbnail/grpc-proxy/proto/echo"
 	"io"
 	"log"
@@ -14,8 +15,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
-
-	db "grpc_proxy_yt_thumbnail/Services"
+	"sync"
 )
 
 type arrayUrls []string
@@ -31,9 +31,13 @@ func (i *arrayUrls) Set(v string) error {
 }
 
 type sync_or_async_interface interface {
-	Download() ([][]byte, string)
+	Download() map[string][]byte
 }
 
+type channelAsyncResult struct {
+	name string
+	val  []byte
+}
 type server struct {
 	pb.UnimplementedEchoServer
 }
@@ -43,17 +47,18 @@ type mainstruct struct {
 	ctx context.Context
 	req *pb.Download
 }
-type async struct {
+type async_mode struct {
 	*mainstruct
 }
-type sync struct {
+type sync_mode struct {
 	*mainstruct
 }
 
 func getMediaId(url string) string {
-	reg := regexp.MustCompile("https://i\\.ytimg\\.com/vi/([^\"]*)/maxresdefault\\.jpg")
-	res := reg.ReplaceAllString(url, "${1}")
-	return res
+	reg := regexp.MustCompile(`https://i\.ytimg\.com/vi/([^/]+)/[^?]*`)
+	match := reg.FindStringSubmatch(url)
+	return match[1] // Возвращаем первую группу захвата
+	return ""       // Если совпадения не найдено
 }
 
 func htmlThumbFinder(nd *html.Node) (response string, ok bool) {
@@ -67,54 +72,46 @@ func htmlThumbFinder(nd *html.Node) (response string, ok bool) {
 	}
 	return "", false
 }
-func downloadFileToDirectory(thumbUrl []string) (f_out_slice []*os.File) {
-	for _, url := range thumbUrl {
-		thumbnailPicUrl, _ := http.Get(url)
-		mediaId := getMediaId(url)
-		out, err := os.Create("downloadedFiles/" + mediaId + ".jpg")
-		if err != nil {
-			log.Fatal("Не удалось создать новый файл: ", err)
-		}
-		f_out_slice = append(f_out_slice, out)
-		_, err = io.Copy(out, thumbnailPicUrl.Body)
-		if err != nil {
-			log.Fatal("Не удалось создать новый файл: ", err)
-		}
-		log.Println("Файл успешно скачан!")
+func downloadFileToDirectory(thumbUrl string) (f_out_slice *os.File) {
+	thumbnailPicUrl, _ := http.Get(thumbUrl)
+	mediaId := getMediaId(thumbUrl)
+	out, err := os.Create("downloadedFiles/" + mediaId + ".jpg")
+	if err != nil {
+		log.Fatal("Не удалось создать новый файл: ", err)
 	}
-	return f_out_slice
-}
-func parseVidToThumb(urls []string) (th_urls []string) {
-	for _, url := range urls {
-		resp, err := http.Get(url)
-		defer resp.Body.Close()
-		if err != nil {
-			log.Fatalf("Ссылка недействительна: %v", err)
-		}
-		parsed_resp, err := html.Parse(resp.Body)
-		if err != nil {
-			log.Fatalf("Не получилось распарсить код-html: %v", err)
-		}
-		th_url, ok := htmlThumbFinder(parsed_resp)
-		if ok == false {
-			log.Fatalf("Не нашел Thumbnail у этого видео")
-		}
-		th_urls = append(th_urls,th_url)
+	_, err = io.Copy(out, thumbnailPicUrl.Body)
+	if err != nil {
+		log.Fatal("Не удалось создать новый файл: ", err)
 	}
-	return
+	log.Println("Файл успешно скачан!")
+	return out
 }
-func convertToBytes(files []*os.File) (map_bytes map[string][][]byte) {
-	for _, f := range files {
+func parseVidToThumb(url string) (th_url string) {
 
-		f.Seek(0, io.SeekStart)
-		convertedImageToBytes, err := io.ReadAll(f)
-		if err != nil {
-			log.Fatalf("Ошибка на чтении файла: %v", err)
-		}
-		f.Close()
-		map_bytes = 
+	resp, err := http.Get(url)
+	defer resp.Body.Close()
+	if err != nil {
+		log.Fatalf("Ссылка недействительна: %v", err)
 	}
+	parsed_resp, err := html.Parse(resp.Body)
+	if err != nil {
+		log.Fatalf("Не получилось распарсить код-html: %v", err)
+	}
+	th_url, ok := htmlThumbFinder(parsed_resp)
+	if ok == false {
+		log.Fatalf("Не нашел Thumbnail у этого видео")
+	}
+
 	return
+}
+func convertToBytes(f *os.File) (string, []byte) {
+	f.Seek(0, io.SeekStart)
+	convertedImageToBytes, err := io.ReadAll(f)
+	if err != nil {
+		log.Fatalf("Ошибка на чтении файла: %v", err)
+	}
+	f.Close()
+	return f.Name(), convertedImageToBytes
 }
 
 func (s *server) PreDownload(ctx context.Context, req *pb.Download) (*pb.Response, error) {
@@ -122,43 +119,66 @@ func (s *server) PreDownload(ctx context.Context, req *pb.Download) (*pb.Respons
 	var downloadInterface sync_or_async_interface
 	switch req.Async {
 	case true:
-		downloadInterface = async{&mainstruct{
+		downloadInterface = async_mode{&mainstruct{
 			s,
 			ctx,
 			req,
 		}}
 	case false:
-		downloadInterface = sync{&mainstruct{
+		downloadInterface = sync_mode{&mainstruct{
 			s,
 			ctx,
 			req,
 		}}
 	}
 
-
-	output, thumbUrl := downloadInterface.Download() // сделать мапу
+	dataMap := downloadInterface.Download() // сделать мапу
 	dbProxy := db.DbConnectInfo.CreateConnectDb()
-	for _, val := range output {
-		db.InsertDb(dbProxy, db.Thumbnail_insrt{, val})
-	}
-	return &pb.Response{Resp: output}, nil
+	matchedData := db.InsertDb_MatchData(dbProxy, dataMap)
+	dbProxy.Close()
+	log.Println("Закрыто")
+	return &pb.Response{Resp: matchedData}, nil
 }
 
 // Асинхронный метод (usage goroutines)
-func (full async) Download() ([][]byte,string) {
-	return nil,""
+func (full async_mode) Download() map[string][]byte {
+	result := make(map[string][]byte)
+	channel := make(chan channelAsyncResult)
+	var wg sync.WaitGroup
+	for _, url := range full.req.Urls {
+		wg.Add(1)
+		go func(url string) {
+			thumbUrl := parseVidToThumb(url)
+			out := downloadFileToDirectory(thumbUrl)
+			log.Println("Начало конвертирования в байты")
+			str, val := convertToBytes(out)
+			log.Println("Коненц конвертирования в байты")
+			channel <- channelAsyncResult{str, val}
+			wg.Done()
+		}(url)
+	}
+
+	wg.Wait()
+	for item := range channel {
+		result[item.name] = item.val
+		if len(result) == len(full.req.Urls) {
+			break
+		}
+	}
+	return result
 }
 
 // Синхронный метод
-func (full sync) Download() (map[string][][]byte) {
+func (full sync_mode) Download() map[string][]byte {
+	result := make(map[string][]byte)
 	if len(full.req.Urls) != 1 {
 		return nil
 	} // ИСПРАВИТЬ
-	thumbUrl := parseVidToThumb(full.req.Urls)
+	thumbUrl := parseVidToThumb(full.req.Urls[0])
 	out := downloadFileToDirectory(thumbUrl)
-
-
-	return convertToBytes(out)
+	str, val := convertToBytes(out)
+	result[str] = val
+	return result
 }
 
 func main() {

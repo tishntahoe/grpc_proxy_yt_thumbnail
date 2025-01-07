@@ -5,6 +5,7 @@ import (
 	"fmt"
 	_ "github.com/lib/pq"
 	"log"
+	"sync"
 )
 
 type dbData string
@@ -26,13 +27,40 @@ func (info dbData) CreateConnectDb() *sql.DB {
 		fmt.Println(err)
 		return nil
 	}
-	fmt.Println("Successfully connected!")
+	log.Println("БД успешно подключена!")
 	return db
 }
-func InsertDb(db *sql.DB, tI Thumbnail_insrt) bool {
-	_, err := db.Exec("insert into thumbnails(name,byt) values($1,$2)", tI.Name, tI.Save_byte)
-	if err != nil {
-		log.Fatal("Ошибка при отправке запроса в базу данных:", err)
+func InsertDb_MatchData(db *sql.DB, data map[string][]byte) (matchedData [][]byte) {
+	log.Println("Начало просмотра таблицы на наличие совпадений")
+	for i, _ := range data {
+		rows, err := db.Query("select byt from thumbnails where name ilike $1", i)
+		if err != nil {
+			log.Fatal("Ошибка при отправке запроса в базу данных:", err)
+		}
+		for rows.Next() {
+			var byt []byte
+			// Считываем значения из каждой строки
+			err := rows.Scan(&byt)
+			if err != nil {
+				log.Fatal("ошибка чтения строки: %w", err)
+			}
+			matchedData = append(matchedData, byt)
+		}
 	}
-	return true
+	log.Println("Начало инсерта в таблицу")
+	var wg sync.WaitGroup
+	wg.Add(len(data))
+	for i, v := range data {
+		go func(i string, v []byte) {
+
+			_, err := db.Exec("insert into thumbnails(name,byt) values($1,$2) on conflict (name) do nothing", i, v)
+			if err != nil {
+				log.Fatal("Ошибка при отправке инсерта в базу данных:", err)
+			}
+			log.Println("Данные загружены")
+
+		}(i, v)
+	}
+	wg.Wait()
+	return
 }
