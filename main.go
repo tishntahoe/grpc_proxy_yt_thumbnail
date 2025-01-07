@@ -67,46 +67,53 @@ func htmlThumbFinder(nd *html.Node) (response string, ok bool) {
 	}
 	return "", false
 }
-func downloadFileToDirectory(thumbUrl string) *os.File {
-
-	thumbnailPicUrl, _ := http.Get(thumbUrl)
-	mediaId := getMediaId(thumbUrl)
-	out, err := os.Create("downloadedFiles/" + mediaId + ".jpg")
-	if err != nil {
-		log.Fatal("Не удалось создать новый файл: ", err)
+func downloadFileToDirectory(thumbUrl []string) (f_out_slice []*os.File) {
+	for _, url := range thumbUrl {
+		thumbnailPicUrl, _ := http.Get(url)
+		mediaId := getMediaId(url)
+		out, err := os.Create("downloadedFiles/" + mediaId + ".jpg")
+		if err != nil {
+			log.Fatal("Не удалось создать новый файл: ", err)
+		}
+		f_out_slice = append(f_out_slice, out)
+		_, err = io.Copy(out, thumbnailPicUrl.Body)
+		if err != nil {
+			log.Fatal("Не удалось создать новый файл: ", err)
+		}
+		log.Println("Файл успешно скачан!")
 	}
-
-	_, err = io.Copy(out, thumbnailPicUrl.Body)
-	if err != nil {
-		log.Fatal("Не удалось создать новый файл: ", err)
-	}
-	log.Println("Файл успешно скачан!")
-	return out
+	return f_out_slice
 }
-func parseVidToThumb(url string) string {
-	resp, err := http.Get(url)
-	defer resp.Body.Close()
-	if err != nil {
-		log.Fatalf("Ссылка недействительна: %v", err)
+func parseVidToThumb(urls []string) (th_urls []string) {
+	for _, url := range urls {
+		resp, err := http.Get(url)
+		defer resp.Body.Close()
+		if err != nil {
+			log.Fatalf("Ссылка недействительна: %v", err)
+		}
+		parsed_resp, err := html.Parse(resp.Body)
+		if err != nil {
+			log.Fatalf("Не получилось распарсить код-html: %v", err)
+		}
+		th_url, ok := htmlThumbFinder(parsed_resp)
+		if ok == false {
+			log.Fatalf("Не нашел Thumbnail у этого видео")
+		}
+		th_urls = append(th_urls,th_url)
 	}
-	parsed_resp, err := html.Parse(resp.Body)
-	if err != nil {
-		log.Fatalf("Не получилось распарсить код-html: %v", err)
-	}
-	url, ok := htmlThumbFinder(parsed_resp)
-	if ok == false {
-		log.Fatalf("Не нашел Thumbnail у этого видео")
-	}
-	return url
+	return
 }
-func convertToBytes(f *os.File) (bytesSlice [][]byte) {
-	f.Seek(0, io.SeekStart)
-	convertedImageToBytes, err := io.ReadAll(f)
-	if err != nil {
-		log.Fatalf("Ошибка на чтении файла: %v", err)
+func convertToBytes(files []*os.File) (map_bytes map[string][][]byte) {
+	for _, f := range files {
+
+		f.Seek(0, io.SeekStart)
+		convertedImageToBytes, err := io.ReadAll(f)
+		if err != nil {
+			log.Fatalf("Ошибка на чтении файла: %v", err)
+		}
+		f.Close()
+		map_bytes = 
 	}
-	f.Close()
-	bytesSlice = append(bytesSlice, convertedImageToBytes)
 	return
 }
 
@@ -127,6 +134,8 @@ func (s *server) PreDownload(ctx context.Context, req *pb.Download) (*pb.Respons
 			req,
 		}}
 	}
+
+
 	output, thumbUrl := downloadInterface.Download() // сделать мапу
 	dbProxy := db.DbConnectInfo.CreateConnectDb()
 	for _, val := range output {
@@ -141,14 +150,15 @@ func (full async) Download() ([][]byte,string) {
 }
 
 // Синхронный метод
-func (full sync) Download() ([][]byte,string) {
+func (full sync) Download() (map[string][][]byte) {
 	if len(full.req.Urls) != 1 {
-		return nil, ""
+		return nil
 	} // ИСПРАВИТЬ
-	mainUrl := full.req.Urls[0]
-	thumbUrl := parseVidToThumb(mainUrl)
+	thumbUrl := parseVidToThumb(full.req.Urls)
 	out := downloadFileToDirectory(thumbUrl)
-	return convertToBytes(out), thumbUrl
+
+
+	return convertToBytes(out)
 }
 
 func main() {
