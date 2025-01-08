@@ -49,16 +49,15 @@ func InsertDb_MatchData(db *sql.DB, data map[string][]byte) (matchedData [][]byt
 	}
 	log.Println("Начало инсерта в таблицу")
 	var wg sync.WaitGroup
-	wg.Add(len(data))
 	for i, v := range data {
+		wg.Add(1)
 		go func(i string, v []byte) {
-
+			defer wg.Done()
 			_, err := db.Exec("insert into thumbnails(name,byt) values($1,$2) on conflict (name) do nothing", i, v)
 			if err != nil {
 				log.Fatal("Ошибка при отправке инсерта в базу данных:", err)
 			}
 			log.Println("Данные загружены")
-
 		}(i, v)
 	}
 	wg.Wait()

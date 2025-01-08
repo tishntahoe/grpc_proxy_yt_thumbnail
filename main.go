@@ -143,28 +143,27 @@ func (s *server) PreDownload(ctx context.Context, req *pb.Download) (*pb.Respons
 // Асинхронный метод (usage goroutines)
 func (full async_mode) Download() map[string][]byte {
 	result := make(map[string][]byte)
-	channel := make(chan channelAsyncResult)
+	var mu sync.Mutex
 	var wg sync.WaitGroup
+
 	for _, url := range full.req.Urls {
 		wg.Add(1)
 		go func(url string) {
+			defer wg.Done()
+
 			thumbUrl := parseVidToThumb(url)
 			out := downloadFileToDirectory(thumbUrl)
 			log.Println("Начало конвертирования в байты")
 			str, val := convertToBytes(out)
-			log.Println("Коненц конвертирования в байты")
-			channel <- channelAsyncResult{str, val}
-			wg.Done()
+			log.Println("Конец конвертирования в байты")
+
+			mu.Lock()
+			result[str] = val
+			mu.Unlock()
 		}(url)
 	}
 
 	wg.Wait()
-	for item := range channel {
-		result[item.name] = item.val
-		if len(result) == len(full.req.Urls) {
-			break
-		}
-	}
 	return result
 }
 
@@ -196,24 +195,27 @@ func main() {
 	pb.RegisterEchoServer(s, &server{})
 	log.Println("Старт grpc сервера")
 
-	// открытие горутины для участия флагов и подключения утилиты
-	go func() {
-		conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure())
-		if err != nil {
-			log.Fatalf("Проблема с подключением ко второму серверу: %v", err)
-		}
-		defer conn.Close()
+	if len(strUrls) != 0 {
 
-		client := pb.NewEchoClient(conn)
-		if len(strUrls) != 0 {
-			_, err = client.PreDownload(context.Background(), &pb.Download{Urls: strUrls, Async: *mode})
-		}
-		if err != nil {
-			log.Fatalf("Ошибка вызова сервера обработки консольной утилиты: %v", err)
-		}
-		log.Printf("Сервер обработки консольной утилиты запущен")
-	}()
+		// открытие горутины для участия флагов и подключения утилиты
+		go func() {
+			conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure())
+			if err != nil {
+				log.Fatalf("Проблема с подключением ко второму серверу: %v", err)
+			}
+			defer conn.Close()
 
+			client := pb.NewEchoClient(conn)
+			if len(strUrls) != 0 {
+				resp, _ := client.PreDownload(context.Background(), &pb.Download{Urls: strUrls, Async: *mode})
+				fmt.Println(resp)
+			}
+			if err != nil {
+				log.Fatalf("Ошибка вызова сервера обработки консольной утилиты: %v", err)
+			}
+			s.Stop()
+		}()
+	}
 	if err := s.Serve(listener); err != nil {
 		log.Fatalf("Ошибка слушания листенера: %v", err)
 	}
