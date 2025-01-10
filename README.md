@@ -52,6 +52,3 @@ go run main.go
    ```bash
    git clone https://github.com/tishotahoe/grpc_proxy_yt_thumbnail.git
    ```
-## Важные моменты
-
-К сожалению, ранее не сталкивался с тестировкой, поэтому GitHub Actions/Gitlab CI/CD отсутсвует, но готов этому обучиться!
