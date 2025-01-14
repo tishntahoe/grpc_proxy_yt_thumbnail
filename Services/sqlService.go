@@ -14,7 +14,7 @@ type Thumbnail_insrt struct {
 	Save_byte []byte
 }
 
-const DbConnectInfo dbData = "host=213.159.71.120 port=5432 user=postgres password=fabirshe dbname=maindb sslmode=disable"
+const DbConnectInfo dbData = "host= port=5432 user=postgres password= dbname=maindb sslmode=disable"
 
 func (info dbData) CreateConnectDb() *sql.DB {
 	db, err := sql.Open("postgres", string(info))
